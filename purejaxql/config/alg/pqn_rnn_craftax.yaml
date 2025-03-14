@@ -34,3 +34,9 @@ TEST_INTERVAL: 0.01 # in terms of total updates
 TEST_NUM_ENVS: 512
 TEST_NUM_STEPS: 10000
 EPS_TEST: 0.00 # 0 for greedy policy
+
+# NCC THINGS
+BUFFER_SIZE: 4000
+META_TRUNC: 1e-5
+META_REG: 0.1
+META_LR: 1e-2
