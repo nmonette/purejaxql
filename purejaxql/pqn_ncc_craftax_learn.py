@@ -350,6 +350,7 @@ def make_train(config):
         y_ti_ada = scale_y_by_ti_ada(eta=config["META_LR"])
 
         def create_agent(rng):
+            obs, _ = env.reset_to_level(rng, sample_random_level(rng), env_params)
             init_x = (
                 jnp.zeros(
                     (1, 1, *basic_env.observation_space(env_params).shape)
@@ -491,13 +492,31 @@ def make_train(config):
                 mask = infos["done"].cumsum(axis=0) < 1
                 level_returns = (infos["reward"] * mask).sum(axis=0)
 
-                return (226 - level_returns) / level_returns
+                return level_returns
 
             ### NCC UPDATES ###
+
             def update_y(rng):
                 
+                def learnability_loop(rng, _):
+                    rng, _rng = jax.random.split(rng)
+                    return rng, score_fn(train_state, _rng)
+                
                 rng, _rng = jax.random.split(rng)
-                scores = score_fn(train_state, _rng)
+                returns = jax.lax.scan(learnability_loop, _rng, None, 5)[1]
+                
+                num_samples = 5
+
+                def gaussian_pdf(x, mean, var):
+                    return (1 / (jnp.sqrt(2 * jnp.pi) * var)) * jnp.exp(-0.5 * ((x - mean) / var) ** 2)
+                
+                mean_returns = jnp.mean(returns, axis=0)
+                mu = mean_returns.mean()
+                sigma_2 = mean_returns.var()
+                
+                pdf_values = gaussian_pdf(mean_returns, mu, sigma_2)
+        
+                scores = jnp.sqrt(returns.var(axis=0)) / jnp.sqrt(num_samples) * pdf_values
 
                 y_fn = lambda y: y.T @ scores - config["META_REG"] * jnp.log(y + 1e-6).T @ y
                 grad, y_opt_state = y_ti_ada.update(jax.grad(y_fn)(train_state.y), train_state.y_opt_state)
@@ -525,12 +544,10 @@ def make_train(config):
 
             train_state = train_state.replace(
                 opt_state = jax.tree_util.tree_map(
-                    lambda x: x if type(x) is not ScaleByTiAdaState else x.replace(vy = train_state.y_opt_state.vy), train_state.opt_state, is_leaf = lambda x: type(x) is ScaleByTiAdaState
+                    lambda x: x if type(x) is not ScaleByTiAdaState else x.replace(vy = train_state.y_opt_state.vy), train_state.opt_state
                 ),
                 timesteps=train_state.timesteps
                 + config["NUM_STEPS"] * config["NUM_ENVS"], # update timesteps count
-                # y = y,
-                # y_opt_state=y_opt_state
             )  
 
             # insert the transitions into the memory
@@ -798,6 +815,7 @@ def make_train(config):
         init_action = jnp.zeros((config["NUM_ENVS"]), dtype=int)
         init_hs = network.initialize_carry(config["NUM_ENVS"])
         expl_state = (init_hs, obs, init_dones, init_action, env_state)
+        # import ipdb; ipdb.set_trace()
 
         # step randomly to have the initial memory window
         def _random_step(carry, _):

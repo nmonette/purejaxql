@@ -5,6 +5,7 @@ ARG REQUIREMENTS_FILE=requirements/requirements.txt
 
 COPY ${REQUIREMENTS_FILE} requirements.txt
 RUN pip install -r requirements.txt
+RUN python3.10 -m pip install git+https://github.com/DramaCow/jaxued.git@main
 
 # put your wandb api key here
 #ENV WANDB_API_KEY= your api key here

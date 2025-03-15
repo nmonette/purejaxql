@@ -1,7 +1,7 @@
 # NVCC_RESULT := $(shell which nvcc 2> NULL; rm NULL)
 # NVCC_TEST := $(notdir $(NVCC_RESULT))
 # ifeq ($(NVCC_TEST),nvcc)
-GPUS='"device=7"'
+GPUS='"device=2"'
 # else
 # GPUS=
 # endif

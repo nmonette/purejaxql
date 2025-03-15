@@ -466,6 +466,8 @@ def make_train(config):
                     )
                     info["reward"] = reward
                     info["done"] = new_done
+                    info["q_val"] = q_vals
+                    info["action"] = new_action
                     step_state = (new_hs, new_obs, new_done, new_action, new_env_state, rng)
                     return step_state, info
 
@@ -488,10 +490,67 @@ def make_train(config):
                 step_state, infos = jax.lax.scan(
                     _greedy_env_step, step_state, None, 1000
                 )
-                mask = infos["done"].cumsum(axis=0) < 1
-                level_returns = (infos["reward"] * mask).sum(axis=0)
+                q_vals = infos["q_val"]
+                rewards = infos["reward"]
+                dones = infos["done"]
+                actions = infos["action"]
 
-                return (226 - level_returns) / level_returns
+                def _compute_targets(last_q, q_vals, reward, done):
+                    def _get_target(lambda_returns_and_next_q, rew_q_done):
+                        reward, q, done = rew_q_done
+                        lambda_returns, next_q = lambda_returns_and_next_q
+                        target_bootstrap = (
+                            reward + config["GAMMA"] * (1 - done) * next_q
+                        )
+                        delta = lambda_returns - next_q
+                        lambda_returns = (
+                            target_bootstrap
+                            + config["GAMMA"] * config["LAMBDA"] * delta
+                        )
+                        lambda_returns = (1 - done) * lambda_returns + done * reward
+                        next_q = jnp.max(q, axis=-1)
+                        return (lambda_returns, next_q), lambda_returns
+
+                    lambda_returns = (
+                        reward[-1] + config["GAMMA"] * (1 - done[-1]) * last_q
+                    )
+                    last_q = jnp.max(q_vals[-1], axis=-1)
+                    _, targets = jax.lax.scan(
+                        _get_target,
+                        (lambda_returns, last_q),
+                        jax.tree_map(lambda x: x[:-1], (reward, q_vals, done)),
+                        reverse=True,
+                    )
+                    targets = jnp.concatenate([targets, lambda_returns[np.newaxis]])
+                    return targets
+
+                def get_level_score(q_vals, actions, dones, rewards):
+                
+                    target_q_vals = q_vals
+                    last_q = target_q_vals[-1].max(axis=-1)
+                    target = _compute_targets(
+                        last_q,  # q_vals at t=NUM_STEPS-1
+                        target_q_vals[:-1],
+                        rewards[:-1],
+                        dones[:-1],
+                    ).reshape(
+                        -1
+                    )  # (num_steps-1*batch_size,)
+
+                    chosen_action_qvals = jnp.take_along_axis(
+                        q_vals,
+                        jnp.expand_dims(actions, axis=-1),
+                        axis=-1,
+                    ).squeeze(
+                        axis=-1
+                    )  # (num_steps, num_agents, batch_size,) # num_agents = num_levels, batch_size = 1?
+                    chosen_action_qvals = chosen_action_qvals[:-1].reshape(
+                        -1,
+                    )  # (num_steps-1*batch_size,)  
+
+                    return 0.5 * jnp.square(chosen_action_qvals - target).mean()
+
+                return jax.vmap(get_level_score, in_axes=1)(q_vals, actions, dones, rewards)
 
             ### NCC UPDATES ###
             def update_y(rng):

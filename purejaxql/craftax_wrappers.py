@@ -157,7 +157,6 @@ class LogEnvState:
     returned_episode_lengths: int
     timestep: int
 
-
 class LogWrapper(UnderspecifiedEnv):
     """Log the episode returns, lengths and achievements."""
 
